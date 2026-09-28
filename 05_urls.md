@@ -4,28 +4,30 @@
 
 ## How Django Routes Requests
 
-When a request hits Django, the URL is matched against patterns in a chain:
+When a request arrives, Django matches the path against patterns in a chain:
 
 ```
-Browser request: POST http://localhost:8000/api/upload-history/
-                                            ↓
-        ┌───────────────────────────────────────────────────┐
-        │  watchtrivia/urls.py (project-level, ROOT_URLCONF)│
-        │                                                   │
-        │  path('admin/', admin.site.urls)     ← no match  │
-        │  path('api/', include('trivia.urls'))  ← MATCH!   │
-        │    strips "api/" → passes "upload-history/" onward│
-        └───────────────────────┬───────────────────────────┘
+Request: POST http://localhost:8000/upload/
                                 ↓
         ┌───────────────────────────────────────────────────┐
-        │  trivia/urls.py (app-level)                       │
-        │                                                   │
-        │  path("upload-history/", views.upload_watch_history) ← MATCH! │
-        │    → calls upload_watch_history(request)           │
+        │  watchtrivia/urls.py   (ROOT_URLCONF)              │
+        │                                                    │
+        │  path("admin/",   admin.site.urls)   ← no match   │
+        │  path("accounts/", include(...))      ← no match   │
+        │  path("", include("trivia.urls"))     ← MATCH      │
+        │    passes the remainder ("upload/") onward          │
+        └───────────────────────┬────────────────────────────┘
+                                ↓
+        ┌───────────────────────────────────────────────────┐
+        │  trivia/urls.py                                    │
+        │                                                    │
+        │  path("upload/", views.upload_history, name="upload")  ← MATCH
+        │    → calls upload_history(request)
         └───────────────────────────────────────────────────┘
 ```
 
-This two-level routing is how Django keeps multi-app projects organized. Each app manages its own URLs; the project just delegates.
+Two-level routing keeps multi-app projects organized: each app owns its URLs, and the
+project just delegates.
 
 ---
 
@@ -34,109 +36,97 @@ This two-level routing is how Django keeps multi-app projects organized. Each ap
 Create `trivia/urls.py`:
 
 ```python
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from django.urls import path
+
 from . import views
 
-# Router auto-generates URLs for ViewSets
-router = DefaultRouter()
-router.register("interests", views.InterestTopicViewSet, basename="interest")
+app_name = "trivia"
 
 urlpatterns = [
-    # ViewSet-generated URLs (list + detail)
-    path("", include(router.urls)),
-    
-    # Custom function-based view URLs
-    path("upload-history/", views.upload_watch_history, name="upload-history"),
+    path("", views.interests, name="interests"),
+    path("upload/", views.upload_history, name="upload"),
     path("generate-quiz/", views.generate_quiz, name="generate-quiz"),
+    path("quiz/<int:attempt_id>/", views.quiz, name="quiz"),
     path(
-        "attempts/<int:attempt_id>/submit-answer/",
+        "quiz/<int:attempt_id>/answer/<int:question_id>/",
         views.submit_answer,
         name="submit-answer",
     ),
     path(
-        "attempts/<int:attempt_id>/complete/",
+        "quiz/<int:attempt_id>/complete/",
         views.complete_attempt,
         name="complete-attempt",
     ),
+    path("results/<int:attempt_id>/", views.results, name="results"),
 ]
 ```
 
-### Understanding `path()` Parameters
+### The Complete URL Map
+
+| URL | Method | View | Purpose |
+|-----|--------|------|---------|
+| `/` | GET | `interests` | Show the user's interests (the landing page) |
+| `/upload/` | GET, POST | `upload_history` | Upload a Takeout file |
+| `/generate-quiz/` | POST | `generate_quiz` | Build an attempt from top interests |
+| `/quiz/<id>/` | GET | `quiz` | Render the attempt's questions |
+| `/quiz/<id>/answer/<qid>/` | POST | `submit_answer` | Record one answer, return a fragment |
+| `/quiz/<id>/complete/` | POST | `complete_attempt` | Close the attempt, go to results |
+| `/results/<id>/` | GET | `results` | Show the final score |
+
+### `path()` Parameters
 
 ```python
-path("upload-history/", views.upload_watch_history, name="upload-history")
-#     ↑ URL pattern      ↑ View function              ↑ Name for reverse()
+path("upload/", views.upload_history, name="upload")
+#     ↑ URL pattern   ↑ View function              ↑ Name for reverse()
 ```
 
 | Parameter | Purpose |
 |-----------|---------|
-| `"upload-history/"` | The URL pattern to match (relative to the parent `include()`) |
-| `views.upload_watch_history` | The view function to call when matched |
-| `name="upload-history"` | A name for reverse URL lookup (used in templates and tests) |
+| `"upload/"` | The pattern, relative to the parent `include()` |
+| `views.upload_history` | The view to call on a match |
+| `name="upload"` | Identifier for `reverse()` |
 
-### URL Parameters: `<int:attempt_id>`
+### URL Path Converters
 
 ```python
-path("attempts/<int:attempt_id>/submit-answer/", views.submit_answer)
+path("quiz/<int:attempt_id>/", views.quiz)
 ```
 
-`<int:attempt_id>` is a **path converter** — it captures part of the URL and passes it as a keyword argument to the view:
+`<int:attempt_id>` captures part of the URL and passes it to the view as a **keyword
+argument**, already converted to an `int`:
 
 ```
-URL: /api/attempts/42/submit-answer/
-                   ↑↑
-                   captures "42" as attempt_id (integer)
+URL: /quiz/42/
+          ^^
+          attempt_id = 42 (an int, not the string "42")
 
-def submit_answer(request, attempt_id):
-    #                       ↑ attempt_id = 42
+def quiz(request, attempt_id):
+    #                    ↑ attempt_id == 42
 ```
 
-Available path converters:
+Because the converter is `int`, a request to `/quiz/abc/` does not match this pattern at
+all — Django returns 404 before your view runs. That is one small safety property you get
+for free.
 
 | Converter | Matches | Example |
 |-----------|---------|---------|
 | `int` | Positive integers | `<int:id>` → `42` |
-| `str` | Non-empty string (no `/`) | `<str:slug>` → `"hello-world"` |
-| `slug` | ASCII letters, numbers, hyphens, underscores | `<slug:slug>` → `"my-post-1"` |
-| `uuid` | UUID format | `<uuid:pk>` → `"075194d3-..."` |
-| `path` | Non-empty string (including `/`) | `<path:file>` → `"dir/file.txt"` |
+| `str` | Any non-empty string without `/` | `<str:slug>` → `"hello"` |
+| `slug` | Letters, numbers, hyphens, underscores | `<slug:slug>` → `"my-post"` |
+| `uuid` | UUID format | `<uuid:pk>` → `"075194d3-…"` |
+| `path` | Any non-empty string including `/` | `<path:file>` → `"a/b.txt"` |
 
-### DRF Routers — Auto-Generated URLs
-
-```python
-router = DefaultRouter()
-router.register("interests", views.InterestTopicViewSet, basename="interest")
-```
-
-This single line generates **multiple URL patterns**:
-
-| URL Pattern | HTTP Method | Action | Name |
-|-------------|------------|--------|------|
-| `/api/interests/` | `GET` | `list` — all interests | `interest-list` |
-| `/api/interests/1/` | `GET` | `retrieve` — interest #1 | `interest-detail` |
-
-If we used `ModelViewSet` instead of `ReadOnlyModelViewSet`, it would also generate:
-
-| URL Pattern | HTTP Method | Action | Name |
-|-------------|------------|--------|------|
-| `/api/interests/` | `POST` | `create` | `interest-list` |
-| `/api/interests/1/` | `PUT` | `update` | `interest-detail` |
-| `/api/interests/1/` | `PATCH` | `partial_update` | `interest-detail` |
-| `/api/interests/1/` | `DELETE` | `destroy` | `interest-detail` |
-
-The `basename="interest"` parameter sets the name prefix for URL reversing.
-
-### `include()` — Delegating URLs
+### `app_name` — Why Namespacing Matters
 
 ```python
-path("", include(router.urls))
+app_name = "trivia"
 ```
 
-`include()` takes a list of URL patterns and prepends the parent path. Since our parent (in `watchtrivia/urls.py`) is `"api/"`, the final URLs are:
+Without it, URL names are global. If a second app also defines `name="upload"`, the
+later one silently wins and `reverse("upload")` resolves to the wrong place — a bug that
+only appears once you add the second app.
 
-- `/api/interests/`
-- `/api/interests/1/`
+With `app_name`, names are namespaced and must be reversed as `"trivia:upload"`.
 
 ---
 
@@ -146,43 +136,159 @@ path("", include(router.urls))
 
 ```python
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import include, path
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/', include('trivia.urls')),
+    path("admin/", admin.site.urls),
+    path("accounts/", include("django.contrib.auth.urls")),
+    path("", include("trivia.urls")),
 ]
 ```
 
-### The Complete URL Map
+| Line | What it does |
+|------|--------------|
+| `path("admin/", admin.site.urls)` | The admin site at `/admin/` |
+| `path("accounts/", include("django.contrib.auth.urls"))` | Django's built-in login/logout/password pages |
+| `path("", include("trivia.urls"))` | The app's URLs at the root |
 
-| URL | Method | View | Purpose |
-|-----|--------|------|---------|
-| `/admin/` | ALL | Django admin | Admin interface |
-| `/api/interests/` | GET | `InterestTopicViewSet.list` | List user's interests |
-| `/api/interests/<id>/` | GET | `InterestTopicViewSet.retrieve` | Get one interest |
-| `/api/upload-history/` | POST | `upload_watch_history` | Upload Takeout file |
-| `/api/generate-quiz/` | POST | `generate_quiz` | Generate quiz from interests |
-| `/api/attempts/<id>/submit-answer/` | POST | `submit_answer` | Submit one answer |
-| `/api/attempts/<id>/complete/` | POST | `complete_attempt` | End the quiz |
+### The `accounts/` Line Is the Whole Auth Story
 
-### URL Naming and `reverse()`
+```python
+path("accounts/", include("django.contrib.auth.urls"))
+```
 
-Every URL has a `name` — this lets you reference URLs by name instead of hardcoding paths:
+One line. Django ships ready-made URL patterns, views, and templates for authentication.
+You get, for free:
+
+| URL | View | What it does |
+|-----|------|--------------|
+| `/accounts/login/` | `LoginView` | Login form; on success redirects to `LOGIN_REDIRECT_URL` |
+| `/accounts/logout/` | `LogoutView` | Ends the session, redirects to `LOGOUT_REDIRECT_URL` |
+| `/accounts/password_change/` | `PasswordChangeView` | Change your password |
+| `/accounts/password_change/done/` | `PasswordChangeDoneView` | Confirmation page |
+
+> [!IMPORTANT]
+> **This is the fix for the original plan's biggest hole.** That version enforced
+> `IsAuthenticated` on every endpoint and never built a login route, so the only way in
+> was through `/admin/`. Every real user was locked out.
+>
+> `django.contrib.auth.urls` costs one line of configuration and two template overrides
+> (Part 6). There is no reason to write a custom login view.
+
+> [!NOTE]
+> The built-in `LoginView` **requires** a `registration/login.html` template, even
+> though it ships a default one. Creating it in `trivia/templates/registration/` lets
+> you style it. Part 6 does this.
+
+### Why the App URLs Are Mounted at Root
+
+```python
+path("", include("trivia.urls"))
+```
+
+The app's URLs therefore live at `/upload/`, `/quiz/1/`, and so on — no `/app/` prefix.
+For a single-app project that is the right call: shorter URLs, and `/` can be the app's
+landing page. In a multi-app project you would use a prefix like `path("trivia/", ...)`.
+
+---
+
+## URL Naming and `reverse()`
+
+Every URL has a name, so you reference it instead of hardcoding a path:
 
 ```python
 from django.urls import reverse
 
-# In tests:
-url = reverse("upload-history")  # → "/api/upload-history/"
-url = reverse("interest-list")   # → "/api/interests/"
-url = reverse("submit-answer", kwargs={"attempt_id": 42})
-# → "/api/attempts/42/submit-answer/"
+reverse("trivia:upload")                        # → "/upload/"
+reverse("trivia:quiz", args=[42])               # → "/quiz/42/"
+reverse("trivia:submit-answer", kwargs={         # → "/quiz/42/answer/7/
+    "attempt_id": 42,
+    "question_id": 7,
+})
+```
+
+`args` takes positional values in URL order; `kwargs` takes them by name. Prefer
+`kwargs` for readability.
+
+Use `reverse()` in three places:
+
+**In views, for redirects:**
+
+```python
+return redirect("trivia:interests")
+return redirect("trivia:quiz", attempt_id=attempt.id)
+```
+
+**In templates, for links:**
+
+```django
+<a href="{% url 'trivia:quiz' attempt.id %}">Resume quiz</a>
+```
+
+**In tests, instead of hardcoded paths:**
+
+```python
+response = self.client.get(reverse("trivia:interests"))
 ```
 
 > [!TIP]
-> **Always use `reverse()` in tests** instead of hardcoding URLs. If you change
-> a URL pattern, only the `urls.py` file needs updating — all tests still work.
+> **Always use `reverse()` in tests.** If a URL pattern changes, only `urls.py` needs
+> updating — every test keeps working. Hardcoded `"/api/interests/"` strings turn a
+> one-line refactor into a hunt through the test suite.
+>
+> This matters most in the original plan, whose tests hardcoded paths like
+> `self.client.get("/api/interests/")` while the tutorial simultaneously taught
+> `reverse()` as best practice.
+
+### `redirect()` Accepts a Name, Not a Path
+
+```python
+redirect("trivia:interests")                    # a name — reversed for you
+redirect("/interests/")                          # a path — used verbatim
+redirect(f"/quiz/{attempt.id}/")                 # an f-string path
+```
+
+Passing a name is better: it is checked at resolve time, so a typo raises
+`NoReverseMatch` immediately rather than producing a 404 in production. Django also
+raises `NoReverseMatch` for a name that does not exist, which turns a silent breakage
+into a loud error.
+
+---
+
+## Slugs: When Your URLs Are Public
+
+For a user-facing site you often want readable URLs:
+
+```python
+path("posts/<slug:slug>/", views.post_detail, name="post-detail")
+```
+
+```python
+class Post(models.Model):
+    slug = models.SlugField(unique=True)
+    # ...
+```
+
+Django can generate the slug for you in `save()`:
+
+```python
+from django.utils.text import slugify
+
+def save(self, *args, **kwargs):
+    if not self.slug:
+        base = slugify(self.title)[:50]
+        slug, counter = base, 2
+        while Post.objects.filter(slug=slug).exists():
+            slug = f"{base}-{counter}"
+            counter += 1
+        self.slug = slug
+    super().save(*args, **kwargs)
+```
+
+> [!NOTE]
+> Watchtrivia uses plain integer IDs. Attempts and questions have no title to derive a
+> slug from, and `/quiz/42/` is honest about what it is. Reach for slugs when the
+> resource has a human-readable name.
 
 ---
 
@@ -190,15 +296,16 @@ url = reverse("submit-answer", kwargs={"attempt_id": 42})
 
 | Concept | What it means |
 |---------|--------------|
-| **`ROOT_URLCONF`** | Setting that tells Django which file is the top-level URL config |
+| **`ROOT_URLCONF`** | Setting naming the top-level URL config file |
 | **`path()`** | Maps a URL pattern to a view |
-| **`include()`** | Delegates URL matching to another URLconf |
-| **`<int:id>`** | Path converter that captures URL segments as typed arguments |
-| **`DefaultRouter`** | DRF class that auto-generates CRUD URLs for ViewSets |
-| **`basename`** | Prefix for auto-generated URL names |
-| **`reverse()`** | Look up a URL by name (no hardcoded paths) |
-| **`name`** | Identifier for reverse URL lookup |
+| **`include()`** | Delegates matching to another URLconf |
+| **`<int:name>`** | Path converter; captures a URL segment as a typed argument |
+| **`app_name`** | Namespaces URL names to avoid collisions between apps |
+| **`name=`** | Identifier used by `reverse()` and `{% url %}` |
+| **`reverse()`** | Look a URL up by name — never hardcode paths |
+| **`args` vs `kwargs`** | Positional or named URL parameters |
+| **`NoReverseMatch`** | Raised when a URL name cannot be resolved — fail loudly |
 
 ---
 
-**→ Continue to [Part 6: Settings — CORS, Auth, and DRF Config](./06_settings.md)**
+**→ Continue to [Part 6: Settings, Templates, and Authentication](./06_templates_and_auth.md)**

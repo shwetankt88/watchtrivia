@@ -1,0 +1,41 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Upload history — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Upload your watch history</h1>
+
+  <ol class="steps">
+    <li>Go to <a href="https://takeout.google.com/" target="_blank"
+               rel="noopener noreferrer">Google Takeout</a> and request your
+        YouTube data.</li>
+    <li>Download the archive and unzip it.</li>
+    <li>Find <code>Takeout/YouTube and YouTube Music/history/watch-history.json</code>.</li>
+    <li>Upload it below.</li>
+  </ol>
+
+  <form method="post" enctype="multipart/form-data" class="upload-form">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+      <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}
+          <p class="help-text">{{ field.help_text }}</p>
+        {% endif %}
+        {% for error in field.errors %}
+          <p class="field-error">{{ error }}</p>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    <button type="submit" class="btn btn-primary">Analyse my history</button>
+  </form>
+
+  <p class="muted">
+    No Takeout export handy? The tutorial ships a sample at
+    <code>sample-data/watch-history.json</code> — upload that to try the app.
+  </p>
+</div>
+{% endblock %}

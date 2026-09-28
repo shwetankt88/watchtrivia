@@ -1,0 +1,36 @@
+<article class="question-card {% if row.answer %}answered{% endif %}"
+         id="question-{{ row.question.id }}">
+
+  <p class="question-meta">{{ row.question.topic.label }}</p>
+  <h2 class="question-text">{{ row.question.prompt_text }}</h2>
+
+  <form method="post"
+        action="{% url 'trivia:submit-answer' attempt.id row.question.id %}"
+        hx-post="{% url 'trivia:submit-answer' attempt.id row.question.id %}"
+        hx-target="#answer-feedback-{{ row.question.id }}"
+        hx-swap="innerHTML"
+        hx-disabled-elt="find button">
+    {% csrf_token %}
+
+    <div class="options">
+      {% for option in row.question.options %}
+        <label class="option">
+          <input type="radio" name="selected_answer" value="{{ option }}"
+                 {% if row.answer %}{% if option == row.answer.selected_answer %}checked{% endif %} disabled{% endif %}>
+          <span>{{ option }}</span>
+        </label>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="btn btn-primary"
+            {% if row.answer %}hidden{% endif %}>
+      Submit answer
+    </button>
+  </form>
+
+  <div id="answer-feedback-{{ row.question.id }}" class="answer-feedback">
+    {% if row.answer %}
+      {% include "trivia/partials/answer_feedback.html" with answer=row.answer question=row.question %}
+    {% endif %}
+  </div>
+</article>

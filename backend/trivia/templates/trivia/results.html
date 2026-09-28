@@ -1,0 +1,42 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Results — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="card results">
+  <h1>You scored {{ correct }} / {{ total }}</h1>
+
+  {% if answered %}
+    <p class="muted">
+      {{ attempt.completed_at|date:"j M Y, H:i" }} &middot;
+      {% if correct == total %}Perfect run.{% else %}Nice effort.{% endif %}
+      {% if unanswered %}&middot; {{ unanswered }} left unanswered{% endif %}
+    </p>
+  {% else %}
+    <p class="muted">You did not answer any questions in this attempt.</p>
+  {% endif %}
+
+  <h2>Review</h2>
+  <ol class="review-list">
+    {% for answer in answers %}
+      <li class="review-item {% if answer.is_correct %}is-correct{% else %}is-wrong{% endif %}">
+        <p class="review-question">{{ answer.question.prompt_text }}</p>
+        <p class="review-answer">
+          You said <strong>{{ answer.selected_answer }}</strong>
+          {% if not answer.is_correct %}
+            &middot; correct answer was
+            <strong>{{ answer.question.correct_answer }}</strong>
+          {% endif %}
+        </p>
+      </li>
+    {% empty %}
+      <li class="muted">Nothing to review.</li>
+    {% endfor %}
+  </ol>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="{% url 'trivia:interests' %}">Try again</a>
+    <a class="btn" href="{% url 'trivia:upload' %}">Upload new history</a>
+  </div>
+</div>
+{% endblock %}

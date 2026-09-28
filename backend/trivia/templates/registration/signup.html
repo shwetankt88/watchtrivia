@@ -1,0 +1,19 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Create an account — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="auth-card">
+  <h1>Create an account</h1>
+
+  <form method="post" action="{% url 'signup' %}">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn-primary">Sign up</button>
+  </form>
+
+  <p class="muted small">
+    Already have one? <a href="{% url 'login' %}">Log in</a>.
+  </p>
+</div>
+{% endblock %}

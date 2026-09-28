@@ -1,0 +1,55 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Your interests — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Your top interests</h1>
+
+  {% if topics %}
+    <p class="muted">
+      Based on your watch history. Weights show each channel's share of your
+      channel-tagged viewing.
+    </p>
+
+    <ul class="interest-list">
+      {% for topic in topics %}
+        <li class="interest">
+          <span class="interest-label">{{ topic.label }}</span>
+          <span class="interest-weight">{{ topic.weight|floatformat:1 }}</span>
+          <div class="bar" role="img"
+               aria-label="{{ topic.label }}: weight {{ topic.weight|floatformat:2 }}">
+            {% widthratio topic.weight 1 100 as pct %}
+            <div class="bar-fill" style="width: {{ pct }}%"></div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+
+    <form method="post" action="{% url 'trivia:generate-quiz' %}"
+          hx-post="{% url 'trivia:generate-quiz' %}"
+          hx-target="#main"
+          hx-select="#main"
+          hx-push-url="true"
+          hx-indicator="#quiz-spinner"
+          hx-disabled-elt="find button">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary">
+        Generate my quiz
+      </button>
+      <span id="quiz-spinner" class="htmx-indicator spinner">Generating questions…</span>
+    </form>
+
+    <p class="muted small">
+      Generating a quiz calls the Claude API and may take 10–30 seconds.
+    </p>
+  {% else %}
+    <div class="empty-state">
+      <p>You have no interests yet.</p>
+      <a class="btn btn-primary" href="{% url 'trivia:upload' %}">
+        Upload your watch history
+      </a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

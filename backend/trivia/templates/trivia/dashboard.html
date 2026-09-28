@@ -1,0 +1,99 @@
+{% extends "trivia/base.html" %}
+{% load humanize %}
+
+{% block title %}Your dashboard — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Hi {{ user.username }}</h1>
+
+  {% if not has_interests %}
+    <div class="empty-state">
+      <p>You have not uploaded any watch history yet, so there is nothing to quiz you on.</p>
+      <a class="btn btn-primary" href="{% url 'trivia:upload' %}">Upload your watch history</a>
+    </div>
+  {% endif %}
+
+  <div class="stat-grid">
+    <div class="stat">
+      <span class="stat-value">{{ headline.attempts }}</span>
+      <span class="stat-label">quizzes started</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ headline.completed }}</span>
+      <span class="stat-label">finished</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ headline.accuracy }}%</span>
+      <span class="stat-label">accuracy on {{ headline.answered }} answers</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ streak }}</span>
+      <span class="stat-label">day streak</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Next quiz</h2>
+
+  {% if has_interests %}
+    <form method="post" action="{% url 'trivia:generate-quiz' %}"
+          hx-post="{% url 'trivia:generate-quiz' %}"
+          hx-target="#main"
+          hx-select="#main"
+          hx-push-url="true"
+          hx-indicator="#dash-spinner"
+          hx-disabled-elt="find button">
+      {% csrf_token %}
+      <p class="muted">
+        {{ quota.quiz.remaining }} of {{ quota.quiz.limit }} quizzes left today
+        &middot; {{ watch_history_count|intcomma }} videos imported
+        &middot; {{ quota.upload.remaining }} of {{ quota.upload.limit }} uploads left today
+      </p>
+      <button type="submit" class="btn btn-primary" {% if quota.quiz.exhausted %}disabled{% endif %}>
+        Generate my quiz
+      </button>
+      <span id="dash-spinner" class="htmx-indicator spinner">Generating questions&hellip;</span>
+    </form>
+  {% else %}
+    <p class="muted">Upload your watch history to unlock quiz generation.</p>
+  {% endif %}
+</div>
+
+{% if topics %}
+<div class="card">
+  <h2>Where you are weakest</h2>
+  <ul class="interest-list">
+    {% for topic in topics %}
+      <li class="interest">
+        <span class="interest-label">{{ topic.label }}</span>
+        <span class="interest-weight">{{ topic.accuracy }}%</span>
+        <div class="bar" role="img"
+             aria-label="{{ topic.label }}: {{ topic.correct }} of {{ topic.answered }} correct">
+          {% widthratio topic.accuracy 1 100 as pct %}
+          <div class="bar-fill" style="width: {{ pct }}%"></div>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if recent %}
+<div class="card">
+  <h2>Recent quizzes</h2>
+  <ul class="attempt-list">
+    {% for attempt in recent %}
+      <li>
+        <a href="{% url 'trivia:results' attempt.id %}">
+          {{ attempt.started_at|date:"j M Y" }}
+          &middot; {{ attempt.score }} correct
+          {% if not attempt.completed_at %}<span class="muted">(abandoned)</span>{% endif %}
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

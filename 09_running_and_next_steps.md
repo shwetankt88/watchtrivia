@@ -2,514 +2,408 @@
 
 ---
 
-## Running the Full Stack
+## The Terminal Layout
 
-You now have a complete application. Let's run both servers and test the full flow.
-
-### Terminal Layout
-
-You need **two terminals** running simultaneously:
-
-```
-┌─────────────────────────────┬─────────────────────────────┐
-│     Terminal 1: Backend     │     Terminal 2: Frontend    │
-│                             │                             │
-│  cd backend                 │  cd frontend                │
-│  venv\Scripts\Activate.ps1  │  npm run dev                │
-│  python manage.py runserver │                             │
-│                             │                             │
-│  → http://localhost:8000    │  → http://localhost:5173    │
-└─────────────────────────────┴─────────────────────────────┘
-```
-
-### Step 1: Start the Backend
-
-```powershell
-cd C:\Users\Administrator\OneDrive\Desktop\watchtrivia\backend
-
-# Activate the virtual environment
-venv\Scripts\Activate.ps1
-
-# Apply any pending migrations
-python manage.py migrate
-
-# Create an admin user (only needed once)
-python manage.py createsuperuser
-
-# Start the development server
-python manage.py runserver
-```
-
-You should see:
-
-```
-Watching for file changes with StatReloader
-Performing system checks...
-
-System check identified no issues (0 silenced).
-August 18, 2026 - 15:00:00
-Django version 5.1.5, using settings 'watchtrivia.settings'
-Starting development server at http://127.0.0.1:8000/
-Quit the server with CTRL-BREAK.
-```
-
-### Step 2: Start the Frontend
-
-Open a **new terminal** (keep the backend running):
-
-```powershell
-cd C:\Users\Administrator\OneDrive\Desktop\watchtrivia\frontend
-
-npm run dev
-```
-
-You should see:
-
-```
-  VITE v5.x.x  ready in 300ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-  ➜  press h + enter to show help
-```
-
-### Step 3: Test the Full Flow
-
-1. **Log into the admin site.** Open `http://localhost:8000/admin/` in your browser and log in with your superuser credentials. This sets a **session cookie** in your browser.
-
-2. **Open the React app.** In the **same browser**, navigate to `http://localhost:5173`. The session cookie carries over because both URLs are on `localhost`.
-
-3. **Get your watch history.** Go to [Google Takeout](https://takeout.google.com):
-   - Deselect everything
-   - Select only **YouTube and YouTube Music**
-   - Under "Multiple formats," ensure **JSON** is selected
-   - Click "Next step" → "Create export"
-   - Download and extract the archive
-   - Find `Takeout/YouTube and YouTube Music/history/watch-history.json`
-
-4. **Upload and play:**
-   - Click the file input and select `watch-history.json`
-   - Wait for processing → your top interests appear
-   - Click "Generate my quiz" → LLM generates questions
-   - Answer the quiz questions
-
----
-
-## Understanding the Full Request Flow
-
-When you upload a file, here's what happens across the entire stack:
-
-```
-  Browser (React)                    Django Backend                    External
-  ──────────────                    ──────────────                    ────────
-       │
-       │  1. User selects watch-history.json
-       │
-       │  2. React creates FormData, POSTs to /api/upload-history/
-       │─────────────────────────────────►│
-       │                                  │  3. CORS middleware checks origin
-       │                                  │  4. Auth middleware checks session cookie
-       │                                  │  5. URL router → upload_watch_history view
-       │                                  │  6. View calls parse_takeout_json(file)
-       │                                  │  7. Parser extracts video titles, channels
-       │                                  │  8. View calls bulk_create → saves to SQLite
-       │                                  │  9. View calls rank_interests → top 5
-       │                                  │ 10. View saves InterestTopic rows
-       │                                  │ 11. Serializer converts topics → JSON
-       │◄─────────────────────────────────│
-       │  12. React receives JSON, sets state
-       │  13. Component re-renders → shows interests
-       │
-       │  14. User clicks "Generate my quiz"
-       │─────────────────────────────────►│
-       │                                  │ 15. View gets top 3 interests
-       │                                  │ 16. For each interest:
-       │                                  │     17. LLM service calls Claude ──────►│ Anthropic API
-       │                                  │     18. Claude returns JSON questions ◄──│
-       │                                  │     19. View saves Question rows
-       │                                  │ 20. Serializer converts questions → JSON
-       │◄─────────────────────────────────│
-       │  21. React shows quiz cards
-       │
-       │  22. User clicks an answer option
-       │─────────────────────────────────►│
-       │                                  │ 23. View creates Answer (auto-scores via save())
-       │                                  │ 24. If correct, increments attempt.score
-       │◄─────────────────────────────────│
-       │  25. React shows correct/incorrect feedback
-```
-
----
-
-## The Authentication Workaround
-
-Right now, the React app depends on logging into `/admin/` to get a session cookie. This is a valid development workflow, but not production-ready.
-
-Here's why it works:
-
-```
-1. Browser visits localhost:8000/admin/
-2. User enters username + password
-3. Django creates a session → stores in DB
-4. Django sends Set-Cookie: sessionid=abc123
-5. Browser stores the cookie for localhost
-6. Browser visits localhost:5173 (React app)
-7. React calls localhost:8000/api/interests/
-8. Browser sends Cookie: sessionid=abc123 (same host: localhost)
-9. Django looks up session → finds the user → request.user is set
-```
-
-This breaks in production because the frontend and backend would be on **different domains** (e.g., `app.watchtrivia.com` vs `api.watchtrivia.com`). The "What's Next" section below covers proper auth solutions.
-
----
-
-## A Note on the Database
-
-Everything above runs on Django's default **SQLite** — a file-based database (`db.sqlite3`). This is perfect for development but has limitations:
-
-| Feature | SQLite | PostgreSQL | MongoDB |
-|---------|--------|-----------|---------|
-| Concurrency | Single writer | Multiple writers | Multiple writers |
-| Scalability | Single server | Scales vertically | Scales horizontally |
-| Schema | Strict (relational) | Strict (relational) | Flexible (document) |
-| Best for | Dev, small apps | Production web apps | Variable-shaped data |
-| Django ORM | Full support | Full support | No ORM (use `pymongo`) |
-
-### The Polyglot Persistence Plan
-
-The original design calls for **polyglot persistence** — using different databases for different data shapes:
+**One terminal.** That is the entire operational difference from the original plan,
+which required two:
 
 ```
 ┌─────────────────────────────────────────────┐
-│              Django Application              │
+│  Terminal 1: Django                         │
 │                                             │
-│  ┌───────────────┐   ┌───────────────────┐  │
-│  │  PostgreSQL    │   │     MongoDB       │  │
-│  │  (relational)  │   │    (document)     │  │
-│  │               │   │                   │  │
-│  │  • User       │   │  • WatchHistory   │  │
-│  │  • QuizAttempt│   │  • Question       │  │
-│  │  • Answer     │   │    (flexible JSON) │  │
-│  │  • InterestTopic│ │                   │  │
-│  └───────────────┘   └───────────────────┘  │
+│  cd watchtrivia/backend                     │
+│  source .venv/bin/activate                  │
+│  python manage.py runserver                 │
+│                                             │
+│  → http://localhost:8000                    │
+│    /            the app                     │
+│    /upload/     upload watch history         │
+│    /accounts/   log in                      │
+│    /admin/      admin site                  │
 └─────────────────────────────────────────────┘
 ```
 
-**Why MongoDB for watch history and questions?**
-- Watch history entries from Google Takeout have variable fields — some have subtitles, some don't, some have extra metadata
-- LLM-generated questions have flexible option counts and metadata
-- Neither needs Django's admin or ORM features
-- MongoDB handles this variable-shaped data naturally
-
-**Why PostgreSQL for the rest?**
-- Users need Django's authentication system (built on the ORM)
-- Quiz attempts and answers have strict, relational structure
-- The admin site requires ORM-backed models
-
-This isn't wired up yet — the SQLite version must work solidly first.
+No second dev server. No `npm run dev`. No proxy configuration.
 
 ---
 
-## Running Tests
+## First Run
 
-Before building new features, make sure everything passes:
+```bash
+cd watchtrivia/backend
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-```powershell
-cd backend
-venv\Scripts\Activate.ps1
+# 1. Confirm the environment file exists
+cat .env
+# ANTHROPIC_API_KEY=sk-ant-...
+# DJANGO_SECRET_KEY=...
+# DEBUG=True
+# ANTHROPIC_MODEL=claude-sonnet-4-6
+# WATCHTRIVIA_MOCK_LLM=False
 
-# Run the full test suite
-python manage.py test trivia -v 2
+# 2. Apply migrations
+python manage.py migrate
+
+# 3. Create a user to log in with
+python manage.py createsuperuser
+
+# 4. Confirm unmigrated model changes are absent (should print "No changes detected")
+python manage.py makemigrations --check --dry-run
+
+# 5. Run the test suite before you start
+python manage.py test trivia
+
+# 6. Start the server
+python manage.py runserver
 ```
 
-Expected output:
+Visit `http://localhost:8000/`. You are redirected to `/accounts/login/`. Log in and you
+land on your (empty) interests page.
 
-```
-test_empty_input_returns_empty_list ... ok
-test_entries_without_channel_names_are_ignored ... ok
-test_ranks_by_frequency_descending ... ok
-test_weights_are_normalized_proportions ... ok
-test_top_n_limits_results ... ok
-test_correct_answer_is_marked_correct ... ok
-test_incorrect_answer_is_marked_incorrect ... ok
-test_case_insensitive_matching ... ok
-test_whitespace_is_trimmed ... ok
-test_unauthenticated_request_is_rejected ... ok
-test_user_only_sees_their_own_interests ... ok
-test_response_format ... ok
-
-----------------------------------------------------------------------
-Ran 12 tests in 0.234s
-
-OK
-```
-
-> [!IMPORTANT]
-> **Always run tests before and after making changes.** If tests pass before
-> your change and fail after, your change broke something. This is the
-> whole point of having tests.
+> [!TIP]
+> **Run the tests before the server.** If 76 tests pass, every moving part is working.
+> Then when something breaks in the browser, you know it is your recent edit, not a
+> pre-existing bug.
 
 ---
 
-## What's Left to Build
+## Development Without an API Key
 
-The core app works end to end. Here are the natural next features, roughly in order of priority:
+If you have no Anthropic key, or no credit, set this in `.env`:
 
-### 1. Proper Authentication API
+```env
+WATCHTRIVIA_MOCK_LLM=True
+```
 
-**Problem:** Users must log into `/admin/` to get a session — this is a developer-only workflow.
+Restart the server. The entire flow — upload, interests, generate quiz, answer, score —
+works with generated placeholder questions and zero network calls.
 
-**Solution:** Add signup/login/logout API endpoints for the React app.
+Toggle it off when you want to test real generation. This is why Part 3 built mock mode
+into the service rather than leaving it as a test-only concern.
+
+---
+
+## Testing the Sample File
+
+If you have no Takeout export, use the sample:
+
+```bash
+# The file ships with the tutorial at sample-data/watch-history.json
+```
+
+Or generate one covering 6 channels so the ranker has something to rank:
 
 ```python
-# What you'd add to trivia/views.py:
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.models import User
+# python manage.py shell
+import json, random
+from datetime import datetime, timedelta, timezone
 
-@api_view(["POST"])
-def signup(request):
-    username = request.data.get("username")
-    password = request.data.get("password")
-    user = User.objects.create_user(username=username, password=password)
-    login(request, user)
-    return Response({"id": user.id, "username": user.username}, status=201)
+CHANNELS = [
+    ("F1 Official", 30),
+    ("Veritasium", 18),
+    ("Corey Schafer", 14),
+    ("Fireship", 9),
+    (" Kurzgesagt", 6),
+    ("Some Random Vlog", 3),
+]
 
-@api_view(["POST"])
-def login_view(request):
-    user = authenticate(
-        username=request.data.get("username"),
-        password=request.data.get("password")
-    )
-    if user:
-        login(request, user)
-        return Response({"id": user.id, "username": user.username})
-    return Response({"error": "Invalid credentials"}, status=400)
+random.seed(42)                      # reproducible
+now = datetime.now(timezone.utc)
+entries = []
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def logout_view(request):
-    logout(request)
-    return Response({"message": "Logged out"})
-```
-
-On the React side, you'd add login/signup forms and call these endpoints instead of relying on the admin.
-
-**Alternative:** Switch from session authentication to **token authentication** (DRF's `TokenAuthentication` or JWT via `djangorestframework-simplejwt`). Tokens work better when the frontend and backend are on different domains.
-
-### 2. Background Task Processing (Celery)
-
-**Problem:** `generate_quiz` calls the LLM synchronously — the user stares at a loading screen for 10–30 seconds while Claude generates questions for each topic.
-
-**Solution:** Move LLM calls to a **Celery background task** so the response returns immediately and the user gets notified when the quiz is ready.
-
-```
-Without Celery (current):
-  POST /generate-quiz/  ──────[30s of LLM calls]──────►  201 Created
-
-With Celery:
-  POST /generate-quiz/  ──►  202 Accepted (task_id: abc)
-                              │
-                              └──► Celery worker picks up task
-                                   └──► Calls Claude for each topic
-                                        └──► Saves questions to DB
-                                             └──► Marks task complete
-
-  GET /quiz-status/abc/  ──►  200 {"status": "complete", "questions": [...]}
-```
-
-This requires:
-- **Redis** as a message broker (Celery sends tasks to Redis, workers pick them up)
-- **Celery** installed and configured
-- A polling or WebSocket mechanism on the frontend
-
-### 3. MongoDB Integration
-
-**Problem:** Watch history and LLM-generated questions have variable shapes that don't fit neatly into a relational schema.
-
-**Solution:** Use `pymongo` directly for these collections while keeping relational data in PostgreSQL/SQLite.
-
-```python
-# Example: storing watch history in MongoDB
-from pymongo import MongoClient
-
-client = MongoClient("mongodb://localhost:27017/")
-db = client.watchtrivia
-
-def save_watch_history(user_id, entries):
-    db.watch_history.insert_many([
-        {"user_id": user_id, **entry} for entry in entries
-    ])
-```
-
-### 4. Smarter Interest Ranking (TF-IDF + K-Means)
-
-**Problem:** The current ranker just counts videos per channel. If you watch 100 videos on one channel about 5 different topics, it reports one interest ("that channel") instead of five.
-
-**Solution:** Use **TF-IDF** (Term Frequency–Inverse Document Frequency) on video titles to find meaningful keywords, then **K-Means clustering** to group them into topics.
-
-```python
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-
-def rank_interests_v2(watch_entries, n_clusters=5):
-    titles = [e["video_title"] for e in watch_entries if e.get("video_title")]
-    
-    # TF-IDF: find distinctive words across all titles
-    vectorizer = TfidfVectorizer(max_features=1000, stop_words="english")
-    tfidf_matrix = vectorizer.fit_transform(titles)
-    
-    # K-Means: group similar titles into clusters
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    clusters = kmeans.fit_predict(tfidf_matrix)
-    
-    # Extract the top keywords per cluster as the topic label
-    feature_names = vectorizer.get_feature_names_out()
-    topics = []
-    for i in range(n_clusters):
-        center = kmeans.cluster_centers_[i]
-        top_words = [feature_names[j] for j in center.argsort()[-3:][::-1]]
-        count = (clusters == i).sum()
-        topics.append({
-            "label": " / ".join(top_words),
-            "weight": round(count / len(titles), 3),
+for channel, count in CHANNELS:
+    for i in range(count):
+        entries.append({
+            "header": "YouTube",
+            "title": f"Watched {channel} episode {i + 1}",
+            "titleUrl": f"https://www.youtube.com/watch?v=vid{i}{count}",
+            "subtitles": [{"name": channel}],
+            "time": (now - timedelta(days=i * 3)).isoformat().replace("+00:00", "Z"),
+            "products": ["YouTube"],
         })
-    
-    return sorted(topics, key=lambda t: t["weight"], reverse=True)
+
+random.shuffle(entries)
+
+with open("../sample-data/watch-history.json", "w") as fh:
+    json.dump(entries, fh, indent=2)
+
+print(f"Wrote {len(entries)} entries across {len(CHANNELS)} channels")
 ```
 
-### 5. Results Screen
+(The shipped `sample-data/watch-history.json` is exactly what that script produces, so
+you only need one or the other.)
 
-**Problem:** After completing a quiz, there's no summary — the user just sees the last question.
+Upload it and you should see **five** interest bars — `top_n=5` caps the list — with
+"F1 Official" highest at a weight of `0.375`.
 
-**Solution:** Add a results page that shows:
-- Final score (e.g., "7/10")
-- Per-topic breakdown (e.g., "F1: 3/4, Finance: 2/3, Cooking: 2/3")
-- Which questions were right/wrong
-- A "Try Again" button
+You can confirm the expected numbers without the browser:
 
-This would require:
-- A new API endpoint: `GET /api/attempts/<id>/results/`
-- A new `status` state in the React component (e.g., `"results"`)
-- A serializer that includes answers with correct/incorrect flags
+```bash
+python -c "
+import json, collections
+d = json.load(open('../sample-data/watch-history.json'))
+c = collections.Counter(e['subtitles'][0]['name'] for e in d)
+for k, v in c.most_common(5): print(f'{k:20s} {v:3d}  {v/len(d):.3f}')
+"
+```
 
 ---
 
-## Deployment Checklist
+## The Full Flow, Manually
 
-When you're ready to deploy to a real server, here's what changes:
+1. **Log in** at `/accounts/login/`
+2. **Upload** `watch-history.json` at `/upload/`
+   → Expect: "Imported 80 videos and found 5 interests."
+3. **Interests** at `/` → five bars, F1 Official highest (0.375)
+4. **Generate my quiz** → a 10–30 second wait with a spinner
+   → Expect: redirect to `/quiz/1/` with 6 questions (3 topics × 2)
+5. **Answer a question** → inline green or red feedback, no page reload
+6. **Answer the same one again** → "You already answered …", score unchanged
+7. **Finish quiz** → `/results/1/` with score and full review
+8. **Try again** → a new attempt, questions regenerate, previous attempt still in history
 
-| Development | Production |
-|-------------|-----------|
-| `python manage.py runserver` | **Gunicorn** or **uWSGI** (multi-process WSGI server) |
-| `DEBUG = True` | `DEBUG = False` (never expose debug pages publicly) |
-| SQLite (`db.sqlite3`) | **PostgreSQL** (concurrent writes, backups) |
-| `SECRET_KEY` in code | `SECRET_KEY` from **environment variable** |
-| `ALLOWED_HOSTS = []` | `ALLOWED_HOSTS = ["yourdomain.com"]` |
-| Vite dev server | `npm run build` → serve `dist/` via **Nginx** |
-| No HTTPS | **HTTPS everywhere** (Let's Encrypt) |
-| No static file serving | `python manage.py collectstatic` → Nginx serves static files |
+### Things to Verify Deliberately
 
-### Minimal Production `settings.py` Changes
+| Check | Expected |
+|-------|----------|
+| Upload `Takeout.zip` (not `.json`) | "That does not look like a .json file" |
+| Upload `subscriptions.json` | "No YouTube videos found in that file" |
+| Upload a text file renamed `.json` | "That file is not valid JSON" |
+| Visit `/` logged out | Redirect to `/accounts/login/` |
+| Log in, then log out, then visit `/quiz/1/` | Redirect to login |
+| Second user, try `/quiz/1/` where 1 is another user's attempt | **404, not 403** |
+| Answer the same question 5 times | Score stays at 1 |
+| Disable JavaScript, submit an answer | Page reloads, still works |
+| Set `WATCHTRIVIA_MOCK_LLM=True`, clear the API key | Quiz still generates |
+
+The last two are the ones that prove the architecture is doing what it claims.
+
+---
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'django'`
+
+The virtual environment is not active. Your prompt should start with `(.venv)`.
+
+```bash
+source .venv/bin/activate     # macOS / Linux
+.venv\Scripts\activate        # Windows
+```
+
+### `TemplateDoesNotExist`
+
+The template is in the wrong place or `APP_DIRS` is off. It should be at
+`trivia/templates/trivia/upload.html`, and `INSTALLED_APPS` must contain `"trivia"`.
+
+For `registration/login.html`, the path is
+`trivia/templates/registration/login.html` — note the app is `trivia` but the
+subdirectory is `registration`, because that is the namespace Django's auth views look
+in.
+
+### `Forbidden (403) / CSRF verification failed`
+
+A `<form method="post">` is missing `{% csrf_token %}`. Every POST form in this app needs
+it.
+
+If the *HTMX* request fails instead, the `htmx:configRequest` script in `base.html` is
+missing or malformed. Check the browser console.
+
+### The generate button does nothing
+
+In order of likelihood:
+
+1. `ANTHROPIC_API_KEY` is unset and `WATCHTRIVIA_MOCK_LLM` is not `True` — check the
+   messages area, which should say so
+2. HTMX did not load — check the Network tab for the 404 on `htmx.org`
+3. The form is missing `{% csrf_token %}`
+
+### `400 Bad Request` and a CSRF error in the console
+
+You are serving the page over HTTPS but Django does not trust the origin, or you have
+`DEBUG=False` with `ALLOWED_HOSTS` set to only `localhost` and are browsing via a
+tunnel hostname. Set `ALLOWED_HOSTS` to include the hostname you are actually using.
+
+### Interests show but generating hangs
+
+The LLM call is synchronous. Three topics × up to 30 seconds each is a real wait. If it
+exceeds a minute, check for rate limiting on the Anthropic dashboard.
+
+This is the known limitation of not using a task queue — see the scope note below.
+
+### `no such table: trivia_question`
+
+Migrations were not applied.
+
+```bash
+python manage.py migrate
+```
+
+---
+
+## Deploying
+
+### Checklist
+
+| Item | Development | Production |
+|------|-------------|------------|
+| `DEBUG` | `True` | **`False`** |
+| `SECRET_KEY` | dev fallback | random, from the environment |
+| `ALLOWED_HOSTS` | localhost | your real domain |
+| `DATABASES` | SQLite | PostgreSQL |
+| Static files | Django serves them | `collectstatic` + a web server |
+| WSGI server | `runserver` | Gunicorn |
+| HTTPS | no | yes |
+| `WATCHTRIVIA_MOCK_LLM` | your choice | `False` |
+| `ANTHROPIC_API_KEY` | `.env` | secrets manager |
+
+### PostgreSQL
+
+```bash
+pip install psycopg[binary]
+```
 
 ```python
-import os
-
-DEBUG = False
-SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
-ALLOWED_HOSTS = ["yourdomain.com", "www.yourdomain.com"]
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ["DB_NAME"],
-        "USER": os.environ["DB_USER"],
-        "PASSWORD": os.environ["DB_PASSWORD"],
-        "HOST": os.environ["DB_HOST"],
-        "PORT": "5432",
+        "NAME": os.environ.get("POSTGRES_DB", "watchtrivia"),
+        "USER": os.environ.get("POSTGRES_USER", "watchtrivia"),
+        "PASSWORD": os.environ["POSTGRES_PASSWORD"],
+        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
+        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
     }
 }
-
-# Security headers
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
 ```
 
-> [!CAUTION]
-> **Never deploy with `DEBUG = True`.** It exposes full stack traces, 
-> settings values, and database queries to anyone who triggers an error.
-> This is a serious security vulnerability.
+Migrations run unchanged. This is the payoff of the ORM over raw SQL.
+
+### Static Files and Gunicorn
+
+```bash
+pip install gunicorn
+python manage.py collectstatic
+```
+
+```bash
+gunicorn watchtrivia.wsgi:application --bind 0.0.0.0:8000 --workers 3
+```
+
+> [!IMPORTANT]
+> `--workers 3` means three processes. **Each LLM call blocks a worker for up to 30
+> seconds.** Three concurrent quiz generations exhaust the pool, and users see 502s.
+>
+> For a real deployment, either raise the worker count substantially (cheap; each worker
+> is idle most of the time) or — the correct fix — move generation to a background task.
+> With `--workers 12` a small site handles bursts comfortably. With background workers,
+> it handles any burst.
+
+### Environment Variables in Production
+
+```bash
+export DJANGO_SECRET_KEY="$(python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')"
+export DEBUG=False
+export ALLOWED_HOSTS=watchtrivia.example.com
+export ANTHROPIC_API_KEY=sk-ant-...
+export POSTGRES_PASSWORD=...
+```
+
+Do not ship a `.env` file to production. Use your platform's secret store.
 
 ---
 
-## What You've Built
+## What This Plan Does Not Build
 
-Looking back, here's the complete architecture you've built across nine parts:
+An honest inventory, because the original plan's biggest sin was promising things it
+never delivered.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                          Watchtrivia                          │
-│                                                              │
-│  ┌─────────────────────┐     ┌─────────────────────────────┐ │
-│  │   React Frontend    │     │       Django Backend         │ │
-│  │                     │     │                              │ │
-│  │  App.jsx            │────►│  URLs → Views → Services    │ │
-│  │  ├─ Upload handler  │◄────│  ├─ upload_watch_history    │ │
-│  │  ├─ Interest list   │     │  ├─ generate_quiz           │ │
-│  │  ├─ Quiz cards      │     │  ├─ submit_answer           │ │
-│  │  └─ api.js (Axios)  │     │  └─ complete_attempt        │ │
-│  │                     │     │                              │ │
-│  │  State machine:     │     │  Services:                  │ │
-│  │  idle → uploading   │     │  ├─ takeout_parser.py       │ │
-│  │  → ready            │     │  ├─ interest_ranker.py      │ │
-│  │  → generating       │     │  └─ llm_service.py (Claude) │ │
-│  │  → quiz             │     │                              │ │
-│  └─────────────────────┘     │  Models (ORM):              │ │
-│                               │  ├─ WatchHistoryEntry       │ │
-│                               │  ├─ InterestTopic           │ │
-│                               │  ├─ Question                │ │
-│                               │  ├─ QuizAttempt             │ │
-│                               │  └─ Answer                  │ │
-│                               │                              │ │
-│                               │  Admin Site (built-in CRUD)  │ │
-│                               │  Test Suite (12 tests)       │ │
-│                               └──────────────┬───────────────┘ │
-│                                              │                 │
-│                                       ┌──────▼──────┐         │
-│                                       │   SQLite    │         │
-│                                       └─────────────┘         │
-└──────────────────────────────────────────────────────────────┘
+| Not built | Why | What it would take |
+|-----------|-----|--------------------|
+| **Background task queue** | The LLM call blocks the request | Celery + Redis, or a managed queue; `generate_quiz` becomes a 202 + polling |
+| **TF-IDF / K-Means clustering** | Channel frequency is sufficient and interpretable | Optional extension given in Part 3; `scikit-learn` |
+| **JSON API** | Not needed by a server-rendered frontend | Part 10 |
+| **User registration** | This is a private tool | A signup view, email verification, password reset email |
+| **Password reset by email** | Users are created by an admin | `django.contrib.auth` views + an email backend |
+| **Pagination** | A Takeout export yields 5 interests, not 5,000 | `Paginator` on the admin and any list view |
+| **Rate limiting** | Fine for a private tool | DRF throttling, or `django-ratelimit` |
+| **Email verification / 2FA** | Overkill for this scope | `django-otp` or an external service |
+| **Internationalisation** | English only | `django.po` files, `{% trans %}` |
+| **Model custom user** | Django's default is fine | Only if you need profile fields |
+
+The original plan's Part 1 stack table promised Celery, Redis, scikit-learn, and
+djangorestframework. It delivered none of them, and a reader who followed it end to end
+would have installed four packages they never used.
+
+**The background task queue is the one real gap.** If you take this app further, that is
+the first thing to add, and the natural shape is:
+
+```python
+# generate_quiz becomes:
+#   create attempt → return 202 + attempt_id
+#   enqueue task
+# frontend polls GET /api/attempts/<id>/status/ every 2s
 ```
 
-### What You've Learned
-
-| Part | Topic | Key takeaway |
-|------|-------|-------------|
-| 1 | Project setup | Django projects vs apps, virtual environments |
-| 2 | Models & admin | ORM, migrations, built-in CRUD admin |
-| 3 | Services | Service layer pattern, keeping views thin |
-| 4 | Serializers & views | DRF, JSON ↔ model translation, API design |
-| 5 | URL configuration | Request routing, URL namespacing |
-| 6 | Settings | CORS, middleware, authentication configuration |
-| 7 | Testing | Unit tests, integration tests, API tests |
-| 8 | React frontend | SPA, state management, API integration |
-| 9 | Full stack | End-to-end flow, deployment, next steps |
+HTMX makes even that pleasant: `hx-get="..." hx-trigger="every 2s" hx-swap="outerHTML"`
+on a status fragment that swaps itself for the quiz when ready. Roughly fifteen lines of
+template, and no JavaScript.
 
 ---
 
-## Final Advice
+## Where to Go Next
 
-1. **Get the simple version working first.** The current channel-frequency ranker and synchronous LLM calls are intentionally simple. Make them work, deploy, get users — then optimize.
+### Deepen the Django
 
-2. **Write tests before adding features.** When you add auth endpoints, write the tests first: "unauthenticated signup returns 201," "duplicate username returns 400," etc. The tests will guide your implementation.
+- **Custom user model** — decide now if you ever will, because it is painful later
+- **Signals** — `post_save` / `pre_delete` for cross-cutting behaviour
+- **Managers** — encapsulate reusable querysets on the model
+- **`select_related` / `prefetch_related`** — read the query counts, fix N+1s
+- **Full-text search** — PostgreSQL's `SearchVector`, or Elasticsearch
+- **Django REST Framework** — Part 10
 
-3. **Read the Django and DRF docs.** This tutorial covers a slice of what both frameworks offer. The [Django documentation](https://docs.djangoproject.com/) and [DRF documentation](https://www.django-rest-framework.org/) are some of the best in the industry — use them.
+### Deepen the frontend
 
-4. **Deploy early.** Don't wait until everything is perfect. A deployed simple app teaches you more about production issues (CORS, HTTPS, environment variables, database migrations) than a perfect local app ever will.
+- HTMX extensions: `json-enc`, `ws-sse` for live updates
+- Hyperscript: small client-side logic without a framework
+- Optimistic UI with `hx-swap-oob`
+- A design system: this CSS is deliberately minimal
+
+### Deepen the AI
+
+- Prompt caching for the system prompt
+- Streaming responses with Server-Sent Events
+- Difficulty calibration based on answer history
+- A `Question` model with `difficulty`, `times_asked`, `times_correct` — so you can
+  generate *better* questions over time rather than the same ones repeatedly
+
+### The Most Valuable Next Step
+
+Write a management command that generates a batch of questions in advance:
+
+```bash
+python manage.py pregenerate_quizzes --days 7
+```
+
+It warms a cache so users never wait 30 seconds, and it gives you a natural place to add
+retry logic, rate-limit handling, and progress reporting — all the things that a
+synchronous request handler does badly.
 
 ---
 
-**Congratulations — you've completed the Watchtrivia tutorial.** 🎉
+## Key Concepts Recap
 
-Each "What's Next" item above is a natural follow-up project. Pick the one that interests you most and start building.
+| Concept | What it means |
+|---------|--------------|
+| **`runserver`** | Development only; single-threaded, restarts on change |
+| **`makemigrations --check`** | CI guard for unmigrated model changes |
+| **`WATCHTRIVIA_MOCK_LLM`** | Test the full flow with no API key and no cost |
+| **Progressive enhancement** | The app must work with JavaScript disabled |
+| **`collectstatic`** | Gather static files for a production web server |
+| **Gunicorn `--workers`** | Each blocking LLM call consumes a worker |
+| **`DEBUG=False`** | Mandatory in production; error pages expose secrets otherwise |
+| **Secrets manager** | Environment variables in production, never a `.env` file |
+| **Scope honesty** | Document what is not built, and why |
+
+---
+
+**→ Continue to [Part 10: Optional JSON API with DRF](./10_optional_drf_api.md)**

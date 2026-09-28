@@ -1,0 +1,25 @@
+{% if already_answered %}
+  <div class="feedback feedback-info">
+    You already answered <strong>{{ answer.selected_answer }}</strong>.
+  </div>
+{% elif form.errors %}
+  <div class="feedback feedback-error">
+    <p>Pick one of the options.</p>
+  </div>
+{% elif answer %}
+  {% if answer.is_correct %}
+    <div class="feedback feedback-correct">
+      <strong>Correct!</strong>
+    </div>
+  {% else %}
+    <div class="feedback feedback-wrong">
+      <strong>Not quite.</strong> The correct answer was
+      <strong>{{ correct_answer }}</strong>.
+    </div>
+  {% endif %}
+
+  <p class="muted small">
+    {{ answered_count }} of {{ total_questions }} answered &middot;
+    score {{ attempt.score }}
+  </p>
+{% endif %}

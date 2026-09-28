@@ -1,0 +1,28 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Your quiz — Watchtrivia{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="quiz-header">
+    <h1>Your quiz</h1>
+    <p class="muted">
+      {{ answered_count }} of {{ rows|length }} answered
+      &middot; score {{ attempt.score }}
+    </p>
+  </div>
+
+  {# Each question card brings its own <form>. They must NOT be wrapped in a
+     single outer <form> -- HTML forbids form nesting, and browsers drop the
+     inner tags silently, which posts every answer to the wrong URL. #}
+  {% for row in rows %}
+    {% include "trivia/partials/question_card.html" with row=row %}
+  {% endfor %}
+
+  <form method="post" action="{% url 'trivia:complete-attempt' attempt.id %}"
+        class="finish-form">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary">Finish quiz</button>
+  </form>
+</div>
+{% endblock %}

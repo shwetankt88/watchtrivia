@@ -1,0 +1,72 @@
+{% extends "trivia/base.html" %}
+
+{% block title %}Watchtrivia — a quiz built from what you actually watch{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>How much of your YouTube history were you actually watching?</h1>
+  <p class="lede">
+    Upload your Google Takeout watch history. We read the channels you spent
+    your time on, turn them into interest topics, and quiz you on them.
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="{% url 'signup' %}">Create a free account</a>
+    <a class="btn" href="{% url 'login' %}">I already have one</a>
+  </div>
+
+  {% if not has_api_key or mock_llm %}
+    <p class="alert alert-warning small">
+      {% if not has_api_key %}
+        This instance has no <code>ANTHROPIC_API_KEY</code> configured, so
+        questions cannot be generated yet.
+      {% else %}
+        This instance is running in mock mode: questions are placeholders, not
+        real Claude output.
+      {% endif %}
+    </p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li>
+      <strong>Export your data.</strong> Google Takeout, select YouTube, export.
+      Google emails you a zip after a few minutes.
+    </li>
+    <li>
+      <strong>Upload <code>watch-history.json</code>.</strong> The file from
+      the <code>YouTube and YouTube Music</code> folder inside the zip. Nothing
+      is sent to Google, and your history is only ever shown to you.
+    </li>
+    <li>
+      <strong>Get your interests.</strong> Your top channels, weighted by how
+      much of your history each one accounts for.
+    </li>
+    <li>
+      <strong>Take the quiz.</strong> Questions written for your topics, and a
+      score at the end that tells you which channels you have been half
+      watching.
+    </li>
+  </ol>
+</section>
+
+<section class="card">
+  <h2>The honest parts</h2>
+  <ul class="steps">
+    <li>
+      <strong>Your history stays yours.</strong> Uploaded rows belong to your
+      account only, and no page exposes them to anyone else.
+    </li>
+    <li>
+      <strong>Quiz generation is capped.</strong> A few quizzes a day, so one
+      person cannot spend the site's budget.
+    </li>
+    <li>
+      <strong>It works without JavaScript.</strong> HTMX makes it feel quick,
+      but every question can be answered by a plain form post.
+    </li>
+  </ul>
+</section>
+{% endblock %}
